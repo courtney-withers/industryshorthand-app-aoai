@@ -74,9 +74,7 @@ const Chat = () => {
     const [ASSISTANT, TOOL, ERROR] = ["assistant", "tool", "error"]
 
     useEffect(() => {
-        if (appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.Working  
-            && appStateContext?.state.chatHistoryLoadingState === ChatHistoryLoadingState.Fail 
-            && hideErrorDialog) {
+        if (appStateContext?.state.isCosmosDBAvailable?.status === CosmosDBStatus.NotWorking && appStateContext.state.chatHistoryLoadingState === ChatHistoryLoadingState.Fail && hideErrorDialog) {
             let subtitle = `${appStateContext.state.isCosmosDBAvailable.status}. Please contact the site administrator.`
             setErrorMsg({
                 title: "Chat history is not enabled",
@@ -120,15 +118,6 @@ const Chat = () => {
             assistantContent += resultMessage.content
             assistantMessage = resultMessage
             assistantMessage.content = assistantContent
-
-            if (resultMessage.context) {
-                toolMessage = {
-                    id: uuid(),
-                    role: TOOL,
-                    content: resultMessage.context,
-                    date: new Date().toISOString(),
-                }
-            }
         }
 
         if (resultMessage.role === TOOL) toolMessage = resultMessage
@@ -190,6 +179,7 @@ const Chat = () => {
             const response = await conversationApi(request, abortController.signal);
             if (response?.body) {
                 const reader = response.body.getReader();
+                let runningText = "";
 
                 while (true) {
                     setProcessMessages(messageStatus.Processing)
@@ -200,27 +190,19 @@ const Chat = () => {
                     const objects = text.split("\n");
                     objects.forEach((obj) => {
                         try {
-                            if (obj !== "" && obj !== "{}") {
-                                result = JSON.parse(obj);
-                                if (result.choices?.length > 0) {
-                                    result.choices[0].messages.forEach((msg) => {
-                                        msg.id = result.id;
-                                        msg.date = new Date().toISOString();
-                                    })
-                                    setShowLoadingMessage(false);
-                                    result.choices[0].messages.forEach((resultObj) => {
-                                        processResultMessage(resultObj, userMessage, conversationId);
-                                    })
-                                }
-                                else if (result.error) {
-                                    throw Error(result.error);
-                                }
-                            }
+                            runningText += obj;
+                            result = JSON.parse(runningText);
+                            result.choices[0].messages.forEach((obj) => {
+                                obj.id = result.id;
+                                obj.date = new Date().toISOString();
+                            })
+                            setShowLoadingMessage(false);
+                            result.choices[0].messages.forEach((resultObj) => {
+                                processResultMessage(resultObj, userMessage, conversationId);
+                            })
+                            runningText = "";
                         }
-                        catch (e) {
-                            console.error(e);
-                            throw e;
-                        }
+                        catch { }
                     });
                 }
                 conversation.messages.push(toolMessage, assistantMessage)
@@ -299,12 +281,10 @@ const Chat = () => {
         try {
             const response = conversationId ? await historyGenerate(request, abortController.signal, conversationId) : await historyGenerate(request, abortController.signal);
             if (!response?.ok) {
-                const responseJson = await response.json();
-                var errorResponseMessage = responseJson.error === undefined ? "Please try again. If the problem persists, please contact the site administrator." : responseJson.error;
                 let errorChatMsg: ChatMessage = {
                     id: uuid(),
                     role: ERROR,
-                    content: `There was an error generating a response. Chat history can't be saved at this time. ${errorResponseMessage}`,
+                    content: "There was an error generating a response. Chat history can't be saved at this time. If the problem persists, please contact the site administrator.",
                     date: new Date().toISOString()
                 }
                 let resultConversation;
@@ -331,6 +311,7 @@ const Chat = () => {
             }
             if (response?.body) {
                 const reader = response.body.getReader();
+                let runningText = "";
 
                 while (true) {
                     setProcessMessages(messageStatus.Processing)
@@ -341,27 +322,19 @@ const Chat = () => {
                     const objects = text.split("\n");
                     objects.forEach((obj) => {
                         try {
-                            if (obj !== "" && obj !== "{}") {
-                                result = JSON.parse(obj);
-                                if (result.choices?.length > 0) {
-                                    result.choices[0].messages.forEach((msg) => {
-                                        msg.id = result.id;
-                                        msg.date = new Date().toISOString();
-                                    })
-                                    setShowLoadingMessage(false);
-                                    result.choices[0].messages.forEach((resultObj) => {
-                                        processResultMessage(resultObj, userMessage, conversationId);
-                                    })
-                                }
-                            }
-                            else if (result.error) {
-                                throw Error(result.error);
-                            }
+                            runningText += obj;
+                            result = JSON.parse(runningText);
+                            result.choices[0].messages.forEach((obj) => {
+                                obj.id = result.id;
+                                obj.date = new Date().toISOString();
+                            })
+                            setShowLoadingMessage(false);
+                            result.choices[0].messages.forEach((resultObj) => {
+                                processResultMessage(resultObj, userMessage, conversationId);
+                            })
+                            runningText = "";
                         }
-                        catch (e) {
-                            console.error(e);
-                            throw e;
-                         }
+                        catch { }
                     });
                 }
 
@@ -403,7 +376,7 @@ const Chat = () => {
 
         } catch (e) {
             if (!abortController.signal.aborted) {
-                let errorMessage = `An error occurred. ${errorResponseMessage}`;
+                let errorMessage = "An error occurred. Please try again. If the problem persists, please contact the site administrator.";
                 if (result.error?.message) {
                     errorMessage = result.error.message;
                 }
@@ -430,14 +403,6 @@ const Chat = () => {
                 } else {
                     if (!result.history_metadata) {
                         console.error("Error retrieving data.", result);
-                        console.log("errorMessage", errorMessage)
-                        let errorChatMsg: ChatMessage = {
-                            id: uuid(),
-                            role: ERROR,
-                            content: errorMessage,
-                            date: new Date().toISOString()
-                        } 
-                        setMessages([...messages, userMessage, errorChatMsg])
                         setIsLoading(false);
                         setShowLoadingMessage(false);
                         abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
@@ -627,8 +592,8 @@ const Chat = () => {
                                     className={styles.chatIcon}
                                     aria-hidden="true"
                                 />
-                                <h1 className={styles.chatEmptyStateTitle}>Start chatting</h1>
-                                <h2 className={styles.chatEmptyStateSubtitle}>This chatbot is configured to answer your questions</h2>
+                                <h1 className={styles.chatEmptyStateTitle}>Welcome to MediCo</h1>
+                                <h2 className={styles.chatEmptyStateSubtitle}>Simplifying the medical discharge workflow.</h2>
                             </Stack>
                         ) : (
                             <div className={styles.chatMessageStream} style={{ marginBottom: isLoading ? "40px" : "0px" }} role="log">
@@ -748,7 +713,7 @@ const Chat = () => {
                             </Stack>
                             <QuestionInput
                                 clearOnSend
-                                placeholder="Type a new question..."
+                                placeholder="Paste in your clinical shorthand..."
                                 disabled={isLoading}
                                 onSend={(question, id) => {
                                     appStateContext?.state.isCosmosDBAvailable?.cosmosDB ? makeApiRequestWithCosmosDB(question, id) : makeApiRequestWithoutCosmosDB(question, id)
@@ -756,6 +721,21 @@ const Chat = () => {
                                 conversationId={appStateContext?.state.currentChat?.id ? appStateContext?.state.currentChat?.id : undefined}
                             />
                         </Stack>
+                    </div>
+                    <div className={styles.sideBanner}>
+                        <h3>Definitions 📝</h3>
+                        <p><strong>ICD-10: </strong> International Classification of Diseases, 10th Revision is a diagnostic and procedure coding system and allows for specificity regarding the cause, manifestation, and type of injury or disease. The ICD-10-AM classification system is used for classifying admitted patient care in the Australian health system.</p>
+                        <p><strong>MBS: </strong> The Medicare Benefits Schedule (MBS) is a list of health professional services that the Australian Government subsidises. MBS items provide patient benefits for a wide range of health services including consultations, diagnostic tests and operations.</p>
+                        <div className={styles.systemPromptContainer}>
+                            <h4>System Prompt 🤖</h4>
+                            <p>You are an AI medical assistance you will be presented with medical shorthand which is a doctor’s note of a patient consultation.
+                                First convert the medical shorthand into a patient discharge summary that is in laymen's terms.
+                                <br />
+                                <br />
+                                Using only the information that you know, then match the 5 most relevant ICD-10 terms.
+                                Then using only the information related to the presenting complaint not past medical history identify the 3 most relevant Australian Medicare Billing Schedule (MBS) Item Numbers and provide the matching description.
+                                Provide the response back in a formatted dot point list.</p>
+                        </div>
                     </div>
                     {/* Citation Panel */}
                     {messages && messages.length > 0 && isCitationPanelOpen && activeCitation && (
@@ -769,7 +749,7 @@ const Chat = () => {
                                 <ReactMarkdown
                                     linkTarget="_blank"
                                     className={styles.citationPanelContent}
-                                    children={DOMPurify.sanitize(activeCitation.content, {ALLOWED_TAGS: XSSAllowTags})}
+                                    children={DOMPurify.sanitize(activeCitation.content, { ALLOWED_TAGS: XSSAllowTags })}
                                     remarkPlugins={[remarkGfm]}
                                     rehypePlugins={[rehypeRaw]}
                                 />
